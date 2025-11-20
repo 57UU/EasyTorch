@@ -9,7 +9,7 @@ class LinearDataset(Dataset):
     def __init__(self):
         start=0
         end=10
-        step=0.5
+        step=0.1
         
         self.x=[]
         self.y=[]
@@ -25,7 +25,7 @@ class SqureDataset(Dataset):
     def __init__(self):
         start=0
         end=10
-        step=0.5
+        step=0.2
         
         self.x=[]
         self.y=[]
@@ -46,7 +46,7 @@ class Model(Module):
             Linear(1, 20),
             LeakyReLU(0.1),
             Linear(20, 20),
-            Sigmoid(),
+            LeakyReLU(0.1),
             Linear(20, 1),
         )
     def forward(self, x: Tensor):
@@ -56,7 +56,7 @@ model=Model()
 
 
 optimizer=Adam(model.parameters(),lr=0.01)
-epoches=500
+epoches=100
 for epoch in range(epoches):
     for x,y in dataloader:
         y_pred=model(x)

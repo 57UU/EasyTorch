@@ -1,13 +1,16 @@
 from .module import Module
 from .tensor import Tensor
+from .init import xavier_uniform_
 
 class Linear(Module):
     def __init__(self, in_features, out_features):
         super().__init__()
         self.in_features = in_features
         self.out_features = out_features
-        self.weight = Tensor.randn((in_features, out_features))
-        self.bias = Tensor.randn((out_features,))*0.1
+        self.weight = Tensor.zeros((in_features, out_features),requires_grad=True)
+        self.bias = Tensor.randn((out_features,),requires_grad=True)
+        xavier_uniform_(self.weight)
+
     def forward(self, x: Tensor):
         return  x @ self.weight + self.bias
 

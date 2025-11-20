@@ -1,3 +1,4 @@
+from typing import Dict
 import enum
 import math
 
@@ -12,6 +13,15 @@ class OpType(enum.Enum):
 
 class GradNumber:
     ZERO:'GradNumber'
+    number_cache:Dict[float,'GradNumber']={}
+    @staticmethod
+    def get_number_no_grad(value:float)->'GradNumber':
+        tryGet=GradNumber.number_cache.get(value,None)
+        if tryGet is not None:
+            return tryGet
+        instance=GradNumber(value,requires_grad=False)
+        GradNumber.number_cache[value]=instance
+        return instance
     def __init__(self, value, requires_grad=True):
         # if not isinstance(value, (int, float)):
         #     raise ValueError("GradNumber value must be a number")
@@ -32,26 +42,38 @@ class GradNumber:
         self.grad=1
         self._backward()
     def _backward(self):
-        if self.opType is None:
+        if self.opType is None or not self.requires_grad:
             return
         if self.opType==OpType.Add:
-            self.preOp1.grad+=self.grad
-            self.preOp2.grad+=self.grad
+            if self.preOp1.requires_grad:
+                self.preOp1.grad+=self.grad
+            if self.preOp2.requires_grad:
+                self.preOp2.grad+=self.grad
         elif self.opType==OpType.Sub:
-            self.preOp1.grad+=self.grad
-            self.preOp2.grad+=self.grad*-1
+            if self.preOp1.requires_grad:
+                self.preOp1.grad+=self.grad
+            if self.preOp2.requires_grad:
+                self.preOp2.grad+=self.grad*-1
         elif self.opType==OpType.Mul:
-            self.preOp1.grad+=self.grad*self.preOp2.value
-            self.preOp2.grad+=self.grad*self.preOp1.value
+            if self.preOp1.requires_grad:
+                self.preOp1.grad+=self.grad*self.preOp2.value
+            if self.preOp2.requires_grad:
+                self.preOp2.grad+=self.grad*self.preOp1.value
         elif self.opType==OpType.Div:
-            self.preOp1.grad+=self.grad/self.preOp2.value
-            self.preOp2.grad+=self.grad*self.preOp1.value*-1/self.preOp2.value**2
+            if self.preOp1.requires_grad:
+                self.preOp1.grad+=self.grad/self.preOp2.value
+            if self.preOp2.requires_grad:
+                self.preOp2.grad+=self.grad*self.preOp1.value*-1/self.preOp2.value**2
         elif self.opType==OpType.Sigmoid:
-            self.preOp1.grad+=self.grad*self.value*(1-self.value)
+            if self.preOp1.requires_grad:
+                self.preOp1.grad+=self.grad*self.value*(1-self.value)
         elif self.opType==OpType.Log:
-            self.preOp1.grad+=self.grad/self.preOp1.value
+            if self.preOp1.requires_grad:
+                self.preOp1.grad+=self.grad/self.preOp1.value
         elif self.opType==OpType.Exp:
-            self.preOp1.grad+=self.grad*self.value
+            if self.preOp1.requires_grad:
+                #eq to self.grad*math.exp(self.preOp1.value)
+                self.preOp1.grad+=self.grad*self.value
         else:
             raise ValueError("Unknown op type")
         if self.preOp1 is not None:
@@ -61,7 +83,7 @@ class GradNumber:
 
     def __add__(self, other):
         if not isinstance(other, GradNumber):
-            other = GradNumber(other,requires_grad=False)
+            other = GradNumber.get_number_no_grad(other)
         ret = GradNumber(self.value + other.value, self.requires_grad or other.requires_grad)
         ret.preOp1 = self
         ret.preOp2 = other
@@ -69,7 +91,7 @@ class GradNumber:
         return ret
     def __sub__(self, other):
         if not isinstance(other, GradNumber):
-            other = GradNumber(other,requires_grad=False)
+            other = GradNumber.get_number_no_grad(other)
         ret = GradNumber(self.value - other.value, self.requires_grad or other.requires_grad)
         ret.preOp1 = self
         ret.preOp2 = other
@@ -77,7 +99,7 @@ class GradNumber:
         return ret
     def __mul__(self, other):
         if not isinstance(other, GradNumber):
-            other = GradNumber(other,requires_grad=False)
+            other = GradNumber.get_number_no_grad(other)
         ret = GradNumber(self.value * other.value, self.requires_grad or other.requires_grad)
         ret.preOp1 = self
         ret.preOp2 = other
@@ -86,7 +108,7 @@ class GradNumber:
     
     def __truediv__(self, other):
         if not isinstance(other, GradNumber):
-            other = GradNumber(other,requires_grad=False)
+            other = GradNumber.get_number_no_grad(other)
         ret = GradNumber(self.value / other.value, self.requires_grad or other.requires_grad)
         ret.preOp1 = self
         ret.preOp2 = other
@@ -95,8 +117,8 @@ class GradNumber:
     
     def sigmoid(x):
         if not isinstance(x, GradNumber):
-            x = GradNumber(x, requires_grad=False)
-        # 计算sigmoid值: 1/(1+e^-x)
+            x = GradNumber.get_number_no_grad(x)
+        #  1/(1+e^-x)
         value = 1 / (1 + math.exp(-x.value))
         ret = GradNumber(value, x.requires_grad)
         ret.preOp1 = x
@@ -107,7 +129,7 @@ class GradNumber:
     
     def log(x):
         if not isinstance(x, GradNumber):
-            x = GradNumber(x, requires_grad=False)
+            x = GradNumber.get_number_no_grad(x)
         # 计算自然对数
         value = math.log(x.value)
         ret = GradNumber(value, x.requires_grad)
@@ -118,7 +140,7 @@ class GradNumber:
     
     def exp(x):
         if not isinstance(x, GradNumber):
-            x = GradNumber(x, requires_grad=False)
+            x = GradNumber.get_number_no_grad(x)
         # 计算指数函数
         value = math.exp(x.value)
         ret = GradNumber(value, x.requires_grad)
@@ -129,58 +151,50 @@ class GradNumber:
     
     # 反向操作魔法方法
     def __radd__(self, other):
-        # 加法满足交换律，所以可以复用__add__
         return self.__add__(other)
     
     def __rsub__(self, other):
-        # 减法不满足交换律，需要特殊处理：other - self
-        other_grad = GradNumber(other, requires_grad=False)
-        ret = GradNumber(other_grad.value - self.value, self.requires_grad)
-        ret.preOp1 = other_grad
-        ret.preOp2 = self
-        ret.opType = OpType.Sub
-        return ret
+        if not isinstance(other, GradNumber):
+            other = GradNumber.get_number_no_grad(other)
+        return other.__sub__( self)
     
     def __rmul__(self, other):
         # 乘法满足交换律，所以可以复用__mul__
         return self.__mul__(other)
     
     def __rtruediv__(self, other):
-        # 除法不满足交换律，需要特殊处理：other / self
-        other_grad = GradNumber(other, requires_grad=False)
-        ret = GradNumber(other_grad.value / self.value, self.requires_grad)
-        ret.preOp1 = other_grad
-        ret.preOp2 = self
-        ret.opType = OpType.Div
-        return ret
+        if not isinstance(other, GradNumber):
+            other = GradNumber.get_number_no_grad(other)
+        return other.__truediv__(self)
     # --- comparison support ---
     def __lt__(self, other):
-        if not isinstance(other, GradNumber):
-            other = GradNumber(other, requires_grad=False)
-        return self.value < other.value
+        if isinstance(other, GradNumber):
+            other = other.value
+        return self.value < other
 
     def __le__(self, other):
-        if not isinstance(other, GradNumber):
-            other = GradNumber(other, requires_grad=False)
-        return self.value <= other.value
+        if isinstance(other, GradNumber):
+            other = other.value
+        return self.value <= other
 
     def __eq__(self, other):
-        if not isinstance(other, GradNumber):
-            other = GradNumber(other, requires_grad=False)
-        return self.value == other.value
+        if isinstance(other, GradNumber):
+            other = other.value
+        return self.value == other
 
     def __ne__(self, other):
-        if not isinstance(other, GradNumber):
-            other = GradNumber(other, requires_grad=False)
-        return self.value != other.value
+        if isinstance(other, GradNumber):
+            other = other.value
+        return self.value != other
 
     def __gt__(self, other):
-        if not isinstance(other, GradNumber):
-            other = GradNumber(other, requires_grad=False)
-        return self.value > other.value
+        if isinstance(other, GradNumber):
+            other = other.value
+        return self.value > other
 
     def __ge__(self, other):
-        if not isinstance(other, GradNumber):
-            other = GradNumber(other, requires_grad=False)
-        return self.value >= other.value
-GradNumber.ZERO=GradNumber(0,requires_grad=False)
+        if isinstance(other, GradNumber):
+            other = other.value
+        return self.value >= other
+
+GradNumber.ZERO=GradNumber(0,False)

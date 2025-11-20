@@ -73,6 +73,12 @@ class Tensor:
         if self.shape != (1,):
             raise ValueError("Only scalar tensors can be converted to Python scalars")
         return self.data[0]
+    def backward(self):
+        """计算梯度"""
+        if not self.requires_grad:
+            raise ValueError("Cannot call backward() on tensor that doesn't require grad")
+        for i in self.data:
+            i.backward()
     def __getitem__(self, indices: Union[int, Tuple[int, ...], slice]) -> Union['Tensor', GradNumber]:
         """获取张量中的元素或子张量"""
         # 处理单个整数索引
@@ -242,8 +248,6 @@ class Tensor:
     def zeros(shape: Tuple[int, ...], requires_grad: bool = False) -> 'Tensor':
         """生成全零张量"""
         result = Tensor(shape, requires_grad)
-        for i in range(len(result.data)):
-            result.data[i].value = 0.0
         return result
     
     def zeros_like(self) -> 'Tensor':
@@ -367,42 +371,49 @@ class Tensor:
         except ValueError:
             raise ValueError(f"Cannot broadcast {self.shape} to {target_shape}")
         
-        # 创建新张量
-        result = Tensor(target_shape, self.requires_grad)
+        # 预先计算广播后的数据
+        total_elements = math.prod(target_shape)
         
-        # 计算每个维度的广播步长
-        strides = [1] * len(target_shape)
-        for i in range(len(target_shape) - 1, -1, -1):
-            if i < len(target_shape) - 1:
-                strides[i] = strides[i + 1] * target_shape[i + 1]
+        # 计算源张量和目标张量的维度差异
+        dim_diff = len(target_shape) - len(self.shape)
         
-        self_strides = [1] * len(self.shape)
-        for i in range(len(self.shape) - 1, -1, -1):
-            if i < len(self.shape) - 1:
-                self_strides[i] = self_strides[i + 1] * self.shape[i + 1]
+        # 预填充数据数组，避免动态扩展
+        result_data = [None] * total_elements
         
-        # 填充数据
-        for target_idx in result._get_indices():
-            # 计算在源张量中的索引
+        # 直接计算每个扁平化索引的映射关系
+        for target_flat_idx in range(total_elements):
+            # 将扁平化索引转换为多维索引
+            target_idx = []
+            temp_idx = target_flat_idx
+            for i in range(len(target_shape) - 1, -1, -1):
+                dim_size = target_shape[i]
+                target_idx.insert(0, temp_idx % dim_size)
+                temp_idx = temp_idx // dim_size
+            
+            # 计算在源张量中的多维索引（只考虑源张量实际存在的维度）
             source_idx = []
-            for i in range(len(target_shape)):
-                target_dim = target_shape[i]
-                if i >= len(self.shape):
-                    # 源张量没有这个维度，使用0
-                    source_idx.append(0)
-                elif self.shape[i] == 1:
+            for i in range(dim_diff, len(target_shape)):
+                source_dim_idx = i - dim_diff
+                if self.shape[source_dim_idx] == 1:
                     # 源张量在这个维度上大小为1，使用0
                     source_idx.append(0)
                 else:
-                    # 源张量在这个维度上大小与目标相同，使用相同的索引
+                    # 使用相同的索引
                     source_idx.append(target_idx[i])
             
-            # 设置值
-            target_flat_idx = result._get_index(target_idx)
-            source_flat_idx = self._get_index(tuple(source_idx)) if len(source_idx) == len(self.shape) else 0
-            result.data[target_flat_idx] = self.data[source_flat_idx]
+            # 计算源张量的扁平化索引
+            source_flat_idx = 0
+            for i in range(len(source_idx)):
+                stride = 1
+                # 只考虑i之后的实际存在的维度
+                for j in range(i + 1, len(source_idx)):
+                    stride *= self.shape[j]
+                source_flat_idx += source_idx[i] * stride
+            
+            result_data[target_flat_idx] = self.data[source_flat_idx]
         
-        return result
+        # 直接在构造函数中传入计算好的数据
+        return Tensor(target_shape, self.requires_grad, data=result_data)
     
     @staticmethod
     def _broadcast_tensors(tensor1: 'Tensor', tensor2: 'Tensor') -> Tuple['Tensor', 'Tensor']:
@@ -544,11 +555,15 @@ class Tensor:
             if self.shape[0] != other.shape[0]:
                 raise ValueError(f"Shapes {self.shape} and {other.shape} are not aligned for dot product")
             
-            result = Tensor((), self.requires_grad or other.requires_grad)
-            result.data[0] = GradNumber(0.0, result.requires_grad)
+            # 先计算点积结果
+            requires_grad = self.requires_grad or other.requires_grad
+            dot_product = GradNumber(0.0, requires_grad)
             
             for i in range(self.shape[0]):
-                result.data[0] = result.data[0] + (self.data[i] * other.data[i])
+                dot_product = dot_product + (self.data[i] * other.data[i])
+            
+            # 然后用计算好的结果初始化Tensor
+            result = Tensor((), requires_grad, data=[dot_product])
             
             return result
         
@@ -558,12 +573,19 @@ class Tensor:
             if self.shape[1] != other.shape[0]:
                 raise ValueError(f"Shapes {self.shape} and {other.shape} are not aligned for matrix-vector multiplication")
             
-            result = Tensor((self.shape[0],), self.requires_grad or other.requires_grad)
+            # 先计算结果列表
+            requires_grad = self.requires_grad or other.requires_grad
+            result_data = []
             
             for i in range(self.shape[0]):
-                result.data[i] = GradNumber(0.0, result.requires_grad)
+                # 计算每一行的点积
+                row_sum = GradNumber(0.0, requires_grad)
                 for j in range(self.shape[1]):
-                    result.data[i] = result.data[i] + (self.data[i * self.shape[1] + j] * other.data[j])
+                    row_sum = row_sum + (self.data[i * self.shape[1] + j] * other.data[j])
+                result_data.append(row_sum)
+            
+            # 然后用计算好的结果列表初始化Tensor
+            result = Tensor((self.shape[0],), requires_grad, data=result_data)
             
             return result
         
@@ -573,12 +595,19 @@ class Tensor:
             if self.shape[0] != other.shape[0]:
                 raise ValueError(f"Shapes {self.shape} and {other.shape} are not aligned for vector-matrix multiplication")
             
-            result = Tensor((other.shape[1],), self.requires_grad or other.requires_grad)
+            # 先计算结果列表
+            requires_grad = self.requires_grad or other.requires_grad
+            result_data = []
             
             for j in range(other.shape[1]):
-                result.data[j] = GradNumber(0.0, result.requires_grad)
+                # 计算每一列的点积
+                col_sum = GradNumber(0.0, requires_grad)
                 for i in range(other.shape[0]):
-                    result.data[j] = result.data[j] + (self.data[i] * other.data[i * other.shape[1] + j])
+                    col_sum = col_sum + (self.data[i] * other.data[i * other.shape[1] + j])
+                result_data.append(col_sum)
+            
+            # 然后用计算好的结果列表初始化Tensor
+            result = Tensor((other.shape[1],), requires_grad, data=result_data)
             
             return result
         
@@ -588,15 +617,20 @@ class Tensor:
             if self.shape[1] != other.shape[0]:
                 raise ValueError(f"Shapes {self.shape} and {other.shape} are not aligned for matrix multiplication")
             
-            result = Tensor((self.shape[0], other.shape[1]), self.requires_grad or other.requires_grad)
+            # 先计算结果列表
+            requires_grad = self.requires_grad or other.requires_grad
+            result_data = []
             
             for i in range(self.shape[0]):
                 for j in range(other.shape[1]):
-                    result.data[i * other.shape[1] + j] = GradNumber(0.0, result.requires_grad)
+                    # 计算矩阵乘法的每个元素
+                    elem_sum = GradNumber(0.0, requires_grad)
                     for k in range(self.shape[1]):
-                        result.data[i * other.shape[1] + j] = result.data[i * other.shape[1] + j] + (
-                            self.data[i * self.shape[1] + k] * other.data[k * other.shape[1] + j]
-                        )
+                        elem_sum = elem_sum + (self.data[i * self.shape[1] + k] * other.data[k * other.shape[1] + j])
+                    result_data.append(elem_sum)
+            
+            # 然后用计算好的结果列表初始化Tensor
+            result = Tensor((self.shape[0], other.shape[1]), requires_grad, data=result_data)
             
             return result
         
