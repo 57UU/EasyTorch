@@ -3,7 +3,18 @@ import math
 import random
 from .grad_number import GradNumber
 
+_cache={}
+
 class Tensor:
+    @staticmethod
+    def from_cache(num:int):
+        if num in _cache:
+            return _cache[num]
+        else:
+            instance=Tensor.from_list([num])
+            _cache[num]=instance
+        return instance
+
     def __init__(self, shape: Tuple[int, ...], requires_grad: bool = False,data=None):
         self.shape = shape
         self.requires_grad = requires_grad
@@ -15,10 +26,13 @@ class Tensor:
             if len(data) != math.prod(shape):
                 raise ValueError(f"Expected {math.prod(shape)} elements, got {len(data)}")
             self.data = data
-    
+    @staticmethod
+    def from_numpy(arr)->'Tensor':
+        return Tensor(arr.shape,requires_grad=False,data=[GradNumber(i,requires_grad=False) for i in arr.flatten()])
     def __str__(self) -> str:
         return f"Tensor(shape={self.shape})"
-    
+    def flatten_(self):
+        self.shape=(math.prod(self.shape),)
     def _get_index(self, indices: Tuple[int, ...]) -> int:
         """将多维索引转换为一维索引"""
         if len(indices) != self.ndim:

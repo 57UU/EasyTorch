@@ -105,3 +105,124 @@ class LeakyReLU(Module):
         self.negative_slope = negative_slope
     def forward(self, x: Tensor):
         return x.leaky_relu(self.negative_slope)
+
+class ParameterList(Module):
+    def __init__(self, *params: Tensor):
+        super().__init__()
+        self.params = params
+        for param in self.params:
+            self.register_parameter(param.__class__.__name__, param)
+    
+    def forward(self, x: Tensor):
+        for param in self.params:
+            x = param(x)
+        return x
+    
+    def __iter__(self):
+        """使ParameterList可迭代"""
+        return iter(self.params)
+    
+    def __len__(self):
+        """返回参数数量"""
+        return len(self.params)
+    
+    def __getitem__(self, idx):
+        """支持索引访问"""
+        return self.params[idx]
+
+class Conv2d(Module):
+    def __init__(self, in_channels, out_channels,):
+        super().__init__()
+        #ksize=3 ,stride=1,padding=0
+        self.in_channels=in_channels
+        self.out_channels=out_channels
+        self.kernels=ParameterList(*[Tensor.randn((in_channels,3,3),requires_grad=True) for _ in range(out_channels)])
+    def forward(self, x: Tensor):
+        """
+        2D卷积层前向传播
+        Args:
+            x: 输入张量，形状为( in_channels,height, width, )
+        Returns:
+            输出张量，形状为(out_channels, height-2, width-2, )
+        """
+        rows=x.shape[1]
+        cols=x.shape[2]
+        out_height=rows-2
+        out_width=cols-2
+        
+        # 创建正确顺序的输出数据
+        out_data=[0] * (self.out_channels * out_height * out_width)
+        
+        # 对每个输出通道进行计算
+        for c in range(self.out_channels):
+            kernel=self.kernels[c]
+            # 对输出张量的每个位置进行计算
+            for row in range(out_height):
+                for col in range(out_width):
+                    # 计算输出数据中的索引
+                    out_idx=c * out_height * out_width + row * out_width + col
+                    
+                    # 计算卷积
+                    s=0
+                    for i in range(self.in_channels):
+                        for j in range(3):
+                            for k in range(3):
+                                s+=x[i,row+j,col+k]*kernel[i,j,k]
+                    
+                    # 将结果存储到正确的位置
+                    out_data[out_idx]=s
+
+        return Tensor((self.out_channels,out_height,out_width),requires_grad=True,data=out_data)
+
+class MaxPool2d(Module):
+    def __init__(self):
+        super().__init__()
+    
+    def forward(self, x: Tensor):
+        """
+        2D最大池化层前向传播
+        Args:
+            x: 输入张量，形状为(channels, height, width)
+        Returns:
+            输出张量，形状为(channels, height/2, width/2)
+        """
+        channels, in_height, in_width = x.shape
+        
+        # 计算输出尺寸
+        out_height = in_height // 2
+        out_width = in_width // 2
+        
+        # 创建输出数据
+        out_data = [0] * (channels * out_height * out_width)
+        
+        # 对每个通道进行池化
+        for c in range(channels):
+            # 对输出张量的每个位置进行计算
+            for out_h in range(out_height):
+                for out_w in range(out_width):
+                    # 计算输入张量中对应的区域
+                    in_h_start = out_h * 2
+                    in_w_start = out_w * 2
+                    
+                    # 找到2x2区域中的最大值
+                    max_val = x[c, in_h_start, in_w_start]
+                    
+                    # 检查2x2区域内的所有值
+                    for dh in range(2):
+                        for dw in range(2):
+                            in_h = in_h_start + dh
+                            in_w = in_w_start + dw
+                            # 确保不越界
+                            if in_h < in_height and in_w < in_width:
+                                val = x[c, in_h, in_w]
+                                if val > max_val:
+                                    max_val = val
+                    
+                    # 计算输出数据中的索引
+                    out_idx = c * out_height * out_width + out_h * out_width + out_w
+                    
+                    # 将最大值存储到输出中
+                    out_data[out_idx] = max_val
+        
+        # 创建并返回输出张量
+        return Tensor((channels, out_height, out_width), requires_grad=x.requires_grad, data=out_data)
