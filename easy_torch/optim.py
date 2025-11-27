@@ -2,9 +2,13 @@ import typing
 from .tensor import Tensor
 from .grad_number import GradNumber
 
+class Optimizer:
+    def step(self):
+        raise NotImplementedError()
+    def zero_grad(self):
+        raise NotImplementedError()
 
-
-class SGD:
+class SGD(Optimizer):
     def __init__(self, params:typing.List[GradNumber], lr=0.01, momentum=0.0):
         self.params = params
         self.lr = lr
@@ -26,7 +30,7 @@ class SGD:
         for param in self.params:
             param.grad = 0.0
 
-class Adam:
+class Adam(Optimizer):
     def __init__(self, params: typing.List[GradNumber], lr=0.001, betas=(0.9, 0.999), eps=1e-8):
         """
         Adam优化器实现
